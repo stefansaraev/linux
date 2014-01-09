@@ -506,6 +506,11 @@ static int c_show(struct seq_file *m, void *v)
 		}
 		seq_puts(m, "\n");
 
+#ifdef CONFIG_ARMV7_COMPAT_CPUINFO
+		/* Print out the non-optional ARMv8 HW capabilities */
+		seq_printf(m, "wp half thumb fastmult vfp edsp neon vfpv3d16 tlsi ");
+		seq_printf(m, "vfpv4 idiva idivt ");
+#endif
 		seq_printf(m, "CPU implementer\t: 0x%02x\n", (midr >> 24));
 		seq_printf(m, "CPU architecture: 8\n");
 		seq_printf(m, "CPU variant\t: 0x%x\n", ((midr >> 20) & 0xf));
