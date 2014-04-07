@@ -43,6 +43,7 @@
 #include <linux/of_platform.h>
 #include <linux/personality.h>
 
+#include <asm/fixmap.h>
 #include <asm/cputype.h>
 #include <asm/elf.h>
 #include <asm/cputable.h>
@@ -375,6 +376,7 @@ void __init setup_arch(char **cmdline_p)
 	*cmdline_p = boot_command_line;
 
 	init_mem_pgprot();
+	early_ioremap_init();
 
 	parse_early_param();
 
