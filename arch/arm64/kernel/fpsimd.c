@@ -158,6 +158,7 @@ void fpsimd_flush_thread(void)
 {
 	memset(&current->thread.fpsimd_state, 0, sizeof(struct fpsimd_state));
 	set_thread_flag(TIF_FOREIGN_FPSTATE);
+	preempt_enable();
 }
 
 /*
@@ -296,23 +297,59 @@ static inline void fpsimd_pm_init(void) { }
 #endif /* CONFIG_CPU_PM */
 
 /*
- * Save the userland FPSIMD state of 'current' to memory
+ * Save the userland FPSIMD state of 'current' to memory, but only if the state
+ * currently held in the registers does in fact belong to 'current'
  */
 void fpsimd_preserve_current_state(void)
 {
 	preempt_disable();
-	fpsimd_save_state(&current->thread.fpsimd_state);
+	if (!test_thread_flag(TIF_FOREIGN_FPSTATE))
+		fpsimd_save_state(&current->thread.fpsimd_state);
 	preempt_enable();
 }
 
 /*
- * Load an updated userland FPSIMD state for 'current' from memory
+ * Load the userland FPSIMD state of 'current' from memory, but only if the
+ * FPSIMD state already held in the registers is /not/ the most recent FPSIMD
+ * state of 'current'
+ */
+void fpsimd_restore_current_state(void)
+{
+	preempt_disable();
+	if (test_and_clear_thread_flag(TIF_FOREIGN_FPSTATE)) {
+		struct fpsimd_state *st = &current->thread.fpsimd_state;
+
+		fpsimd_load_state(st);
+		this_cpu_write(fpsimd_last_state, st);
+		st->cpu = smp_processor_id();
+	}
+	preempt_enable();
+}
+
+/*
+ * Load an updated userland FPSIMD state for 'current' from memory and set the
+ * flag that indicates that the FPSIMD register contents are the most recent
+ * FPSIMD state of 'current'
  */
 void fpsimd_update_current_state(struct fpsimd_state *state)
 {
 	preempt_disable();
 	fpsimd_load_state(state);
+	if (test_and_clear_thread_flag(TIF_FOREIGN_FPSTATE)) {
+		struct fpsimd_state *st = &current->thread.fpsimd_state;
+
+		this_cpu_write(fpsimd_last_state, st);
+		st->cpu = smp_processor_id();
+	}
 	preempt_enable();
+}
+
+/*
+ * Invalidate live CPU copies of task t's FPSIMD state
+ */
+void fpsimd_flush_task_state(struct task_struct *t)
+{
+	t->thread.fpsimd_state.cpu = NR_CPUS;
 }
 
 #ifdef CONFIG_KERNEL_MODE_NEON
@@ -326,16 +363,19 @@ void kernel_neon_begin(void)
 	BUG_ON(in_interrupt());
 	preempt_disable();
 
-	if (current->mm)
+	/*
+	 * Save the userland FPSIMD state if we have one and if we haven't done
+	 * so already. Clear fpsimd_last_state to indicate that there is no
+	 * longer userland FPSIMD state in the registers.
+	 */
+	if (current->mm && !test_and_set_thread_flag(TIF_FOREIGN_FPSTATE))
 		fpsimd_save_state(&current->thread.fpsimd_state);
+	this_cpu_write(fpsimd_last_state, NULL);
 }
 EXPORT_SYMBOL(kernel_neon_begin);
 
 void kernel_neon_end(void)
 {
-	if (current->mm)
-		fpsimd_load_state(&current->thread.fpsimd_state);
-
 	preempt_enable();
 }
 EXPORT_SYMBOL(kernel_neon_end);
@@ -348,12 +388,12 @@ static int fpsimd_cpu_pm_notifier(struct notifier_block *self,
 {
 	switch (cmd) {
 	case CPU_PM_ENTER:
-		if (current->mm)
+		if (current->mm && !test_thread_flag(TIF_FOREIGN_FPSTATE))
 			fpsimd_save_state(&current->thread.fpsimd_state);
 		break;
 	case CPU_PM_EXIT:
 		if (current->mm)
-			fpsimd_load_state(&current->thread.fpsimd_state);
+			set_thread_flag(TIF_FOREIGN_FPSTATE);
 		break;
 	case CPU_PM_ENTER_FAILED:
 	default:
