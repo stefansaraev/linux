@@ -1,7 +1,7 @@
 /*
  * Mailbox: Common code for Mailbox controllers and users
  *
- * Copyright (C) 2014 Linaro Ltd.
+ * Copyright (C) 2013-2014 Linaro Ltd.
  * Author: Jassi Brar <jassisinghbrar@gmail.com>
  *
  * This program is free software; you can redistribute it and/or modify
@@ -17,12 +17,13 @@
 #include <linux/err.h>
 #include <linux/module.h>
 #include <linux/device.h>
+#include <linux/bitops.h>
 #include <linux/mailbox_client.h>
 #include <linux/mailbox_controller.h>
 
-#define TXDONE_BY_IRQ	(1 << 0) /* controller has remote RTR irq */
-#define TXDONE_BY_POLL	(1 << 1) /* controller can read status of last TX */
-#define TXDONE_BY_ACK	(1 << 2) /* S/W ACK recevied by Client ticks the TX */
+#define TXDONE_BY_IRQ	BIT(0) /* controller has remote RTR irq */
+#define TXDONE_BY_POLL	BIT(1) /* controller can read status of last TX */
+#define TXDONE_BY_ACK	BIT(2) /* S/W ACK recevied by Client ticks the TX */
 
 static LIST_HEAD(mbox_cons);
 static DEFINE_MUTEX(con_mutex);
@@ -125,7 +126,7 @@ static void poll_txdone(unsigned long data)
 
 	if (resched)
 		mod_timer(&mbox->poll, jiffies +
-				msecs_to_jiffies(mbox->period));
+				msecs_to_jiffies(mbox->txpoll_period));
 }
 
 /**
@@ -250,8 +251,6 @@ int mbox_send_message(struct mbox_chan *chan, void *mssg)
 	}
 
 	msg_submit(chan);
-
-	reinit_completion(&chan->tx_complete);
 
 	if (chan->txdone_method	== TXDONE_BY_POLL)
 		poll_txdone((unsigned long)chan->mbox);
